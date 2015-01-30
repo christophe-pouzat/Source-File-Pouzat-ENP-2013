@@ -1,0 +1,828 @@
+#+TITLE: Fluorescence Imaging Analysis: The Case of Calcium Transients.
+#+DATE: June 26 2013
+#+OPTIONS: H:2
+#+EXCLUDE_TAGS: noexport
+#+LANGUAGE: en
+#+SELECT_TAGS: export
+#+LATEX_CLASS: beamer
+#+LATEX_CLASS_OPTIONS: [presentation]
+#+BEAMER_HEADER: \setbeamertemplate{navigation symbols}{}
+#+BEAMER_HEADER: \setbeamercovered{invisible}
+#+COLUMNS: %45ITEM %10BEAMER_ENV(Env) %10BEAMER_ACT(Act) %4BEAMER_COL(Col) %8BEAMER_OPT(Opt)
+
+* Introduction
+
+** Setting up =org= :noexport:
+#+BEGIN_SRC elisp :eval no-export
+  (require 'ox-beamer)
+  (setq org-beamer-outline-frame-options "")
+#+END_SRC
+
+#+RESULTS:
+
+** Setting up =R=  :noexport:
+The data we are going to use as illustrations are located at the following URL: 
++ [[http://xtof.disque.math.cnrs.fr/data/Gain.2nd.RData]], for the CCD calibration data.
++ [[http://xtof.disque.math.cnrs.fr/data/POMC.txt]], for the POMC data.
+
+*** Loading the POMC data set in =R=
+The POMC data set is located in an ASCII file whose first 6 lines contain a description of what the data are and how to read them properly. Here we are simply doing:
+#+BEGIN_SRC R :session *R-ENP-2013* :exports none :eval no-export
+  tmp <- scan("http://xtof.disque.math.cnrs.fr/data/POMC.txt",skip=6)
+  time <- tmp[1:168]
+  stack <- array(tmp[-(1:168)],dim=c(60,80,168))
+  rm(tmp)
+#+END_SRC
+
+#+RESULTS:
+
+*** Some R functions definitions
+#+BEGIN_SRC R :session *R-ENP-2013* :exports none :eval no-export
+  plotSignal <- function(stack,
+                         lwd=1) {
+      nX <- dim(stack)[1]
+      nY <- dim(stack)[2]
+      nT <- dim(stack)[3]
+      dynRange <- range(stack)
+  
+      xRange <- c(0,nX*nT)
+      yRange <- c(0,nY)
+      old.par <- par(mar=c(3,1,2,1))
+      on.exit(par(old.par))
+      plot(xRange,
+           yRange,
+           type="n",
+           xaxs="i",xaxt="n",
+           yaxs="i",yaxt="n")
+    
+      dynDiff <- diff(dynRange)
+      for(cIdx in 1:nY) {
+          for (rIdx in 1:nX) {
+              xMin <- 1+(rIdx-1)*nT
+              xMax <- rIdx*nT
+              yMin <- (cIdx-1)
+              yMax <- cIdx
+              rect(xMin,yMin,xMax,yMax,border="grey90",lwd=lwd)
+              sig <- stack[rIdx,cIdx,]
+              adu340 <- (sig-dynRange[1])/dynDiff + (cIdx-1)
+              theTime <- xMin:xMax
+              lines(theTime,adu340,lwd=lwd)
+          } ## end of for loop on rIdx
+      } ## end of for loop on cIdx
+  }
+#+END_SRC
+
+#+RESULTS:
+
+** The variability inherent to fluorescence imaging data (1) :export:
+#+header: :file POMC-raw-data.png :width 1000 :height 800
+#+BEGIN_SRC R :session *R-ENP-2013* :exports results :results output graphics :eval no-export
+  plotSignal(stack[24:35,34:43,],lwd=1.5)
+#+END_SRC
+#+ATTR_LaTeX: :width 0.75\textwidth
+#+RESULTS:
+[[file:POMC-raw-data.png]]
+
+ADU counts (raw data) from Fura-2 excited at 340 nm. Each square corresponds to a pixel. 25.05 s of data are shown. Same scale on each sub-plot. Data recorded by Andreas Pippow (Kloppenburg Lab. Cologne University).
+
+** The variability inherent to fluorescence imaging data (2) 	     :export:
+#+header: :file POMC-single-pixel-data.png :width 1000 :height 800
+#+BEGIN_SRC R :session *R-ENP-2013* :exports results :results output graphics :eval no-export
+  par(cex=3)
+  plot(time,stack[29,39,],
+       xlab="Time (s)",
+       ylab="ADU count",
+       type="l",lwd=3)
+#+END_SRC
+#+ATTR_LaTeX: :width 0.75\textwidth
+#+RESULTS:
+[[file:POMC-single-pixel-data.png]]
+
+One of the central pixels of the previous figure.
+
+** What do we want? (1) 					     :export:
+Given the data set illustrated on the last two slides we might want to estimate parameters like:
++ the peak amplitude
++ the decay time constant(s)
++ the baseline level
++ the whole time course (strictly speaking, a function).
+
+** What do we want? (2) 					     :export:
+If we have a model linking the calcium dynamics---the time course of the free calcium concentration in the cell---to the fluorescence intensity like:
+\[\frac{\mathrm{d}Ca_t}{\mathrm{dt}} \left(1 + \kappa_{F}(Ca_t) + \kappa_{E}(Ca_t) \right) + \frac{j(Ca_t)}{v} = 0 \, , \]
+where $Ca_t$ stands for $[Ca^{2+}]_{free}$ at time t, $v$ is the volume of the neurite---within which diffusion effects can be neglected---and
+\[j(Ca_t) \equiv \gamma (Ca_t - Ca_{steady}) \, ,\]
+is the model of calcium extrusion---$Ca_{steady}$ is the steady state $[Ca^{2+}]_{free}$---
+\[\kappa_{F}(Ca_t) \equiv \frac{F_{total} \, K_{F}}{(K_{F} + Ca_t)^2} \quad \mathrm{and} \quad \kappa_{E}(Ca_t) \equiv \frac{E_{total} \, K_{E}}{(K_{E} + Ca_t)^2} \, ,\]
+where $F$ stands for the fluorophore en $E$ for the /endogenous/ buffer.
+
+** What do we want? (3) 					     :export:
+In the previous slide, assuming that the fluorophore (Fura) parameters: $F_{total}$ and $K_F$ have been calibrated, we might want to estimate:
++ the extrusion parameter: $\gamma$
++ the endogenous buffer parameters: $E_{total}$ and $K_E$
+using an equation relating measured fluorescence to calcium:
+\[Ca_t = K_{F} \, \frac{S_t - S_{min}}{S_{max} - S_t} \, ,\]
+where $S_t$ is the fluorescence (signal) measured at time $t$, $S_{min}$ and $S_{max}$ are /calibrated/ parameters corresponding respectively to the fluorescence in the absence of calcium and with saturating $[Ca^{2+}]$ (for the fluorophore).  
+
+** What do we want? (4) 					     :export:
++ The variability of our signal---meaning that under replication of our measurements /under the exact same conditions/ we wont get the exact same signal---implies that our estimated parameters will also fluctuate upon replication.
++ Formally our parameters are modeled as /random variables/ and *it is not enough to summarize a random variable by a single number*.
++ If we cannot get the full distribution function for our parameters, we want to give at least ranges within which the true value of the parameter should be found with a given probability.
++ In other words: *an analysis without confidence intervals is not an analysis*, it is strictly speaking useless since it can't be reproduced---if I say that my time constant is 25.76 ms the probability that upon replication I get again 25.76 is essentially 0; if I say that the actual time constant has a 0.95 probability to be in the interval [24,26.5], I can make a comparison with replications.
+
+** A proper handling of the "variability" matters (1) :export:
+Let us consider a simple data generation model:
+\[Y_i \sim \mathcal{P}(f_i)\, , \quad i=0,1,\ldots,K \; ,\]
+where $\mathcal{P}(f_i)$ stands for the /Poisson distribution/ with parameter $f_i$ :
+\[\mathrm{Pr}\{Y_i = n\} = \frac{(f_i)^n}{n!} \exp (-f_i)\, , \quad \mathrm{for} \quad n=0,1,2,\ldots \]
+and
+\[f_i = f(\delta i| f_{\infty}, \Delta, \beta) = f_{\infty} + \Delta \, \exp (- \beta \, \delta i)\; ,\]
+\delta is a time step and $f_{\infty}$, \Delta and \beta are model parameters.
+
+** A proper handling of the "variability" matters (2) 		     :export:
+#+header: :width 1000 :height 1000 :file mono-exp-sim.png
+#+BEGIN_SRC R :session *R-ENP-2013* :exports results :results output graphics :eval no-export
+  tau.true <- 1
+  baseline <- 100
+  delta <- 900
+  set.seed(20061001)  
+  X <- seq(0,5*tau.true,0.1)
+  Theo <- delta*exp(-X/tau.true)+baseline
+  Sample <- rpois(X,Theo)
+  t1 <- 0.3
+  t2 <- 3
+  idx1 <- 1+t1*10
+  idx2 <- 1+t2*10
+  par(cex=3)
+  plot(X,Sample,
+         xlab="Time (s)",
+         ylab="y (counts)",
+         type="n")
+  segments(-5,Sample[idx1],X[idx1],Sample[idx1],lty=2)
+  text(0,Sample[idx1]+50,expression(y[1]))
+  segments(-5,Sample[idx2],X[idx2],Sample[idx2],lty=2)
+  text(0,Sample[idx2]+50,expression(y[2]))
+  lines(X,Theo,col=1)
+  points(X,Sample)
+  points(X[idx1],Sample[idx1],pch=16)
+  points(X[idx2],Sample[idx2],pch=16)
+#+END_SRC
+#+ATTR_LaTeX: :width 0.65\textwidth
+#+RESULTS:
+[[file:mono-exp-sim.png]]
+
+Data simulated according to the previous model. We are going to assume that $f_{\infty}$ and $\Delta$ are known and that $(t_1,y_1)$ and $(t_2,y_2)$ are given. We want to estimate $\beta$.
+
+** Two estimators (1) :export:
+We are going to consider two /estimators/ for $\beta$:
++ The "classical" least square estimator: \[ \tilde{\beta} = \arg \min \tilde{L}(\beta) \; ,\] where \[ \tilde{L}(\beta) = \sum_j \big( y_j - f(t_j \mid \beta) \big)^2 \; .\]
++ The least square estimator applied to the /square root/ of the data: \[\hat{\beta} = \arg \min \hat{L}(\beta) \; ,\] where \[ \hat{L}(\beta) = \sum_j \big( \sqrt{y_j} - \sqrt{f(t_j \mid \beta)} \big)^2 \; .\]
+
+** Two estimators (2) :export:
+We perform an empirical study as follows:
++ We simulate 100,000 experiments such that: \[ (Y_1,Y_2) \sim \big(\mathcal{P}(f(0.3|\beta_0), \mathcal{P}(f(3|\beta_0)\big) \; ,\] with $\beta_0=1$.
++ For each simulated pair, $(y_1,y_2)^{[k]}$ ($k=1,\ldots,10^5$), we minimize $\tilde{L}(\beta)$ and $\hat{L}(\beta)$ to obtain: $(\tilde{\beta}^{[k]},\hat{\beta}^{[k]})$.
++ We build histograms for $\tilde{\beta}^{[k]}$ and $\hat{\beta}^{[k]}$ as density estimators of our estimators.
+
+** Two estimators (3) :export:
+
+#+BEGIN_SRC R :session *R-ENP-2013* :exports none :results silent :eval no-export
+t1 <- 0.3
+t2 <- 3
+Range <- c(0.1,3)
+tau.true <- 1
+beta.true <- 1/tau.true
+Range <- rev(1/Range)
+baseline <- 100
+delta <- 900
+Sfct <- function(beta) delta*exp(-c(t1,t2)*beta)+baseline
+target0 <- function(beta,y) sum((y-Sfct(beta))^2)
+target1 <- function(beta,y) sum((sqrt(y)-sqrt(Sfct(beta)))^2)
+nrep <- 100000
+set.seed(20061001)
+beta.est <- sapply(1:nrep, 
+                  function(idx) {
+                    y <- rpois(2,delta*exp(-c(t1,t2)*beta.true)+baseline)
+                    c(optimize(target0,Range,y=y)$minimum,
+                      optimize(target1,Range,y=y)$minimum)
+                  }
+                  )
+#+END_SRC
+
+#+header: :width 1000 :height 1000 :file betas.png :eval no-export
+#+BEGIN_SRC R :session *R-ENP-2013* :exports results :results output graphics
+Ffct <- function(beta) delta * exp(-c(t1, t2)*beta) + baseline
+dFfct <- function(beta) -c(t1, t2)*delta * exp(-c(t1, t2)*beta)
+sd0 <- sqrt((sum(dFfct(1)^2*Ffct(1))/sum(dFfct(1)^2)^2))
+sd1 <- sqrt(1/sum(dFfct(1)^2/Ffct(1)))
+hist0 <- hist(beta.est[1,],breaks=50,plot=FALSE)
+hist1 <- hist(beta.est[2,],breaks=50,plot=FALSE)
+betaV <- seq(0.6,1.6,len=501)
+par(cex=3)
+plot(hist1$mids,
+     hist1$density,
+     type="l",
+     lwd=3,
+     col=2,
+     xlim=range(hist0$breaks),
+     xlab=expression(beta),
+     ylab="Density",
+     main=expression("Densities of"~hat(beta)~"and"~tilde(beta))
+     )
+lines(betaV,
+      dnorm(betaV,1,sd1),
+      col=2,
+      lty=2,
+      lwd=2)
+lines(hist0$mids,
+      hist0$density,
+      col=1,
+      lwd=3)
+lines(betaV,
+      dnorm(betaV,1,sd0),
+      col=1,
+      lty=2,
+      lwd=2)
+legend(1.2,5,
+       c(expression(hat(beta)~"empirical"),
+         expression(hat(beta)~"theoretical"),
+         expression(tilde(beta)~"empirical"),
+         expression(tilde(beta)~"theoretical")
+         ),
+       col=c(2,2,1,1),
+       lwd=c(2,1,2,1)+1,
+       lty=c(1,2,1,2),
+       bty="n")
+#+END_SRC
+#+ATTR_LaTeX: :width 0.65\textwidth
+#+RESULTS:
+[[file:betas.png]]
+
+Both histograms are built with 50 bins. $\hat{\beta}$ is *clearly* better than $\tilde{\beta}$ since its variance is smaller. The derivation of the theoretical (large sample) densities is given in [[http://intl-jn.physiology.org/cgi/content/short/103/2/1130][Joucla et al (2010)]].
+
+* CCD camera noise 						    :export:
+
+** CCD basics 							    :export:
+
+#+ATTR_LaTeX: :width 0.5\textwidth
+[[file:vanVliet1998F3.png]]
+
+Source: L. van Vliet et col. (1998) [[http://homepage.tudelft.nl/e3q6n/publications/1998/AP98LVDSTY/AP98LVDSTY.html][Digital Fluorescence Imaging Using Cooled CCD Array Cameras]] (figure 3).
+
+** "Noise" sources in CCD (1) 					     :export:
++ The "Photon noise" or "shot noise" arises from the fact the measuring a fluorescence intensity, \lambda, implies *counting photons*---unless one changes the laws of Physics there is nothing one can do to eliminate this source of variability (improperly called "noise")---: \[\mathrm{Pr}\{N=n\} = \frac{\lambda^n}{n!} \exp -\lambda\, , \quad n \, = \, 0,1,\ldots\, , \quad \lambda > 0\; .\]
++ The "thermal noise" arises from thermal agitation which "dumps" electrons in potential wells; this "noise" also follows a Poisson distribution but it can be made negligible by /cooling down/ the camera.    
+
+** "Noise" sources in CCD (2) 					     :export:
++ The "read out noise" arises from the conversion of the number of photo-electrons into an equivalent tension; it follows a normal distribution whose variance is independent of the mean (as long as reading is not done at too high a frequency).
++ The "digitization noise" arises from the mapping of a continuous value, the tension, onto a grid; it is negligible as soon as more than 8 bit are used.
+
+** A simple CCD model (1) 					     :export:
++ We can easily obtain a simple CCD model taking into account the two main "noise" sources (photon and read-out). 
++ To get this model we are going the fact (a theorem) that when a *large number of photon are detected*, the Poisson distribution is well approximated by ([[http://en.wikipedia.org/wiki/Convergence_in_distribution#Convergence_in_distribution][converges in distribution]] to) a normal distribution with identical mean and variance: \[\mathrm{Pr}\{N=n\} = \frac{\lambda^n}{n!} \exp -\lambda \approx \mathcal{N}(\lambda,\lambda) \; .\]
++ In other words: \[ N \approx \lambda + \sqrt{\lambda} \, \epsilon \; ,\] where $\epsilon \sim \mathcal{N}(0,1)$ (follows a standard normal distribution).     
+
+** A simple CCD model (2) 					     :export:
++ A read-out noise is added next following a normal distribution with 0 mean and variance $\sigma_{R}^2$.
++ We are therefore adding to the random variable $N$ a new *independent* random variable $R \sim \mathcal{N}(0,\sigma_{R}^2)$ giving: \[M \equiv N+R \approx \lambda + \sqrt{\lambda+\sigma_{R}^2} \, \epsilon \; ,\] where the fact that the sum of two independent normal random variables is a normal random variable whose mean is the sum of the mean and whose variance is the sum of the variances has been used.
+
+** A simple CCD model (3) 					     :export:
++ Since the capacity of the photo-electron weels is finite (35000 for the camera used in the first slides) and since the number of photon-electrons will be digitized on 12 bit (4096 levels), a "gain" $G$ *smaller than one* must be applied if we want to represent faithfully (without saturation) an almost full well.
++ We therefore get: \[Y \equiv G \cdot M \approx G \, \lambda + \sqrt{G^2 \, (\lambda+\sigma_{R}^2)} \, \epsilon \; .\]
+
+** For completeness: Convergence in distribution of a Poisson toward a normal rv (1) :export:
+We use the [[http://en.wikipedia.org/wiki/Moment-generating_function][moment-generating function]] and the following theorem (/e.g./ John Rice, 2007, /Mathematical Statistics and Data Analysis/, Chap. 5, Theorem A):
++ If the moment-generating function of each element of the rv sequence $X_n$ is $m_n(t)$,
++ if the moment-generating function of the rv $X$ is $m(t)$,
++ if $m_n(t) \rightarrow m(t)$ when $n \rightarrow \infty$ for all $|t| \le b$ where $b > 0$
++ then $X_n \xrightarrow{D} X$. 
+
+** For completeness: Convergence in distribution of a Poisson toward a normal rv (2) :export:
+Lets show that:
+\[Y_n = \frac{X_n - n}{\sqrt{n}} \; , \]
+where $X_n$ follows a Poisson distribution with parameter $n$, converges in distribution towards $Z$ standard normal rv.
+
+We have:
+\[m_n(t) \equiv \mathrm{E}\left[\exp(Y_n t)\right] \; ,\]
+therefore:
+\[m_n(t) = \sum_{k=0}^{\infty} \exp\left(\frac{k-n}{\sqrt{n}}t\right) \frac{n^k}{k!} \exp(-n) \; ,\]
+
+** For completeness: Convergence in distribution of a Poisson toward a normal rv (3) :export:
+\[m_n(t) = \exp(-n) \exp(-\sqrt{n}t) \sum_{k=0}^{\infty} \frac{\left(n \exp\left(t/\sqrt{n}\right)\right)^k}{k!}\]
+\[m_n(t) = \exp\left(-n - \sqrt{n} t+ n \exp(t/\sqrt{n})\right)\]
+\[m_n(t) = \exp\left(-n - \sqrt{n} t+ n \sum_{k=0}^{\infty}  \left(\frac{t}{\sqrt{n}}\right)^k \frac{1}{k!}\right)\]
+\[m_n(t) = \exp\left(-n - \sqrt{n} t+ n + \sqrt{n} t + \frac{t^2}{2} + n \sum_{k=3}^{\infty}  \left(\frac{t}{\sqrt{n}}\right)^k \frac{1}{k!}\right)\]
+\[m_n(t) = \exp\left( \frac{t^2}{2} + n \sum_{k=3}^{\infty} \left(\frac{t}{\sqrt{n}}\right)^k \frac{1}{k!}\right)\]
+
+** For completeness: Convergence in distribution of a Poisson toward a normal rv (4) :export:
+We must show:
+\[n \sum_{k=3}^{\infty}\left(\frac{t}{\sqrt{n}}\right)^k \frac{1}{k!} \rightarrow_{n \rightarrow \infty} 0 \quad \forall\ |t| \le b, \quad \text{where}
+      \quad b > 0\, ,\]
+since $\exp(-t^2/2)$ is the moment-generating function of a standard normal rv.
+But
+\[\left| n \sum_{k=3}^{\infty} \left(\frac{t}{\sqrt{n}}\right)^k \frac{1}{k!} \right| \rightarrow_{n \rightarrow \infty} 0 \quad \forall\ |t| \le b, \quad \text{where} \quad b > 0\,\]
+implies that since
+\[- \left|n \sum_{k=3}^{\infty}
+      \left(\frac{t}{\sqrt{n}}\right)^k \frac{1}{k!} \right| \le n
+    \sum_{k=3}^{\infty} 
+      \left(\frac{t}{\sqrt{n}}\right)^k \frac{1}{k!} \le \left| n
+        \sum_{k=3}^{\infty} 
+      \left(\frac{t}{\sqrt{n}}\right)^k \frac{1}{k!} \right| \, .\]
+
+** For completeness: Convergence in distribution of a Poisson toward a normal rv (5) :export:
+But for all $|t| \le b$ where $b > 0$
+\begin{displaymath}
+  \begin{array}{lcl}
+    0 \le \left| n \sum_{k=3}^{\infty}
+      \left(\frac{t}{\sqrt{n}}\right)^k \frac{1}{k!} \right| & \le & n
+    \sum_{k=3}^{\infty} 
+      \left(\frac{|t|}{\sqrt{n}}\right)^k \frac{1}{k!} \\
+      & \le & \frac{|t|^3}{\sqrt{n}} \sum_{k=0}^{\infty} 
+      \left(\frac{|t|}{\sqrt{n}}\right)^k \frac{1}{(k+3)!} \\
+      & \le & \frac{|t|^3}{\sqrt{n}} \sum_{k=0}^{\infty} 
+      \left(\frac{|t|}{\sqrt{n}}\right)^k \frac{1}{k!} \\
+      & \le & \frac{|t|^3}{\sqrt{n}}
+      \exp\left(\frac{|t|}{\sqrt{n}}\right) \rightarrow_{n \rightarrow
+      \infty} 0 \, ,
+  \end{array}
+\end{displaymath}
+which completes the proof.
+
+** For completeness: Convergence in distribution of a Poisson toward a normal rv (6) :export:
+#+header: :width 1000 :height 800 :file Y5.png
+#+BEGIN_SRC R :exports results :results output graphics :eval no-export
+ZZ <- seq(-3,3,len=501)
+FZ <- pnorm(ZZ)
+FY5 <- stepfun(((0:25)-5)/sqrt(5),c(0,ppois(0:25,5)))
+par(cex=2)
+plot(ZZ,FZ,type="l",lwd=2,col=2,xlab="Z",ylab="")
+lines(FY5,do.points=FALSE,verticals=FALSE,lwd=2)
+#+END_SRC
+#+ATTR_LaTeX: :width 0.8\textwidth
+#+RESULTS:
+[[file:Y5.png]]
+
+Cumulative distribution functions (CDF) of $Y_5$ and $Z$ (standard normal).
+
+** For completeness: Convergence in distribution of a Poisson toward a normal rv (7) :export:
+#+ATTR_LaTeX: width=0.8\textwidth
+#+header: :width 1000 :height 800 :file Y50.png
+#+BEGIN_SRC R :exports results :results output graphics :eval no-export
+ZZ <- seq(-3,3,len=501)
+FZ <- pnorm(ZZ)
+FY50 <- stepfun(((0:500)-50)/sqrt(50),c(0,ppois(0:500,50)))
+par(cex=2)
+plot(ZZ,FZ,type="l",lwd=2,col=2,xlab="Z",ylab="")
+lines(FY50,do.points=FALSE,verticals=FALSE,lwd=2)
+#+END_SRC
+#+ATTR_LaTeX: :width 0.8\textwidth
+#+RESULTS:
+[[file:Y50.png]]
+
+Cumulative distribution functions (CDF) of $Y_{50}$ and $Z$ (standard normal).
+
+** For completeness: Convergence in distribution of a Poisson toward a normal rv (8) :export:
+#+ATTR_LaTeX: width=0.8\textwidth
+#+header: :width 1000 :height 800 :file Y500.png
+#+BEGIN_SRC R :exports results :results output graphics :eval no-export
+ZZ <- seq(-3,3,len=501)
+FZ <- pnorm(ZZ)
+FY500 <- stepfun(((0:2500)-500)/sqrt(500),c(0,ppois(0:2500,500)))
+par(cex=2)
+plot(ZZ,FZ,type="l",lwd=2,col=2,xlab="Z",ylab="")
+lines(FY500,do.points=FALSE,verticals=FALSE,lwd=2)
+#+END_SRC
+#+ATTR_LaTeX: :width 0.8\textwidth
+#+RESULTS:
+[[file:Y500.png]]
+
+Cumulative distribution functions (CDF) of $Y_{500}$ and $Z$.
+
+** For completeness: Convergence in distribution of a Poisson toward a normal rv (9) :export:
+#+ATTR_LaTeX: width=0.8\textwidth
+#+header: :width 1000 :height 800 :file Y5000.png
+#+BEGIN_SRC R :exports results :results output graphics :eval no-export
+ZZ <- seq(-3,3,len=501)
+FZ <- pnorm(ZZ)
+FY5000 <- stepfun(((0:25000)-5000)/sqrt(5000),c(0,ppois(0:25000,5000)))
+par(cex=2)
+plot(ZZ,FZ,type="l",lwd=2,col=2,xlab="Z",ylab="")
+lines(FY5000,do.points=FALSE,verticals=FALSE,lwd=2)
+#+END_SRC
+#+ATTR_LaTeX: :width 0.8\textwidth
+#+RESULTS:
+[[file:Y5000.png]]
+
+Cumulative distribution functions (CDF) of $Y_{5000}$ and $Z$.
+
+* CCD calibration 						     :export:
+
+** CCD calibration (1) 						     :export:
+If what I just exposed is correct, with the two (main) "noise" sources, the observations $Y$ (from a CCD pixel) follow:
+\[Y \sim G \, \lambda + \sqrt{G^2 \, (\lambda+\sigma_{R}^2)} \, \epsilon \; ,\]
+where $G$ is the camera gain, $\sigma_{R}^2$ is the read-out variance and $\epsilon$ is a standard normal rv. The values of $G$ and $\sigma_{R}^2$ are specified by the manufacturer for each camera, but experience shows that manufacturers tend to be overoptimistic when it comes to their product performances---they can for instance give an underestimated $\sigma_{R}^2$. *Its therefore a good idea to measure these parameters with calibration experiments*. *Such calibration experiments are also the occasion to check that our simple model is relevant*.
+
+** CCD calibration (2) 						     :export:
++ Our problem becomes: How to test $Y \sim G \, \lambda + \sqrt{G^2 \, (\lambda+\sigma_{R}^2)} \, \epsilon$ ? Or how to set different values for $\lambda$?
++ Let's consider a pixel of our CCD "looking" at a fixed volume of a [[http://en.wikipedia.org/wiki/Fluorescein][fluorescein]] solution with a given (and stable) concentration. We have two ways of modifying \lambda :
+  - Change the intensity $i_{e}$ of the light source exciting the fluorophore.
+  - Change the exposure time  $\tau$.
+
+** CCD calibration (3) 						     :export:
+We can indeed write our $\lambda$ as:
+\[\lambda = \phi v c i_{e} \tau \, ,\]
+where
++ $v$ is the solution's volume "seen" by a given pixel,
++ $c$ is the fluorophore's concentration,
++ $\phi$ is the [[http://en.wikipedia.org/wiki/Quantum_yield][quantum yield]].
+
+In practice it is easier to vary the exposure time \tau and that's what was done in the experiments described next... *Question: Can you guess what these experiments are?*
+
+** CCD calibration (4) 						     :export:
+Sebastien Joucla and myself asked our collaborators from the [[http://cecad.uni-koeln.de/Prof-Peter-Kloppenburg.82.0.html][Kloppenburg lab]] (Cologne University) to:
++ choose 10 exposure times,
++ for each of the 10 times, perform 100 exposures,
++ for each of the 10 x 100 exposures, record the value $y_{ij}$ of the rv $Y_{ij}$ of CCD's pixel $i,j$.
+
+We introduce a rv $Y_{ij}$ for each pixel because it is very difficult (impossible) to have a uniform intensity ($i_e$) and a uniform volume ($v$) and a uniform quantum yield ($\phi$). We have therefore for each pixel:
+\[Y_{i,j} \sim G \, p_{i,j} \tau + \sqrt{G^2 \, (p_{i,j} \tau+\sigma_{R}^2)} \, \epsilon_{i,j}\; ,\]  
+where $p_{i,j} = c \phi_{i,j} v_{i,j} i_{e,i,j}$.
+
+** CCD calibration (5) 						     :export:
++ If our model is correct we should have for each pixel $i,j$, for a given exposure time, a mean value: \[\bar{y}_{i,j} = \frac{1}{100} \sum_{k=1}^1 y_{i,j,k} \approx G \, p_{i,j} \tau \] 
++ and a variance: \[S_{i,j}^2 = \frac{1}{99} \sum_{k=1}^1 (y_{i,j,k}-\bar{y}_{i,j})^2 \approx G^2 \, (p_{i,j} \tau+\sigma_{R}^2) \; .\]
++ The graph of $S_{i,j}^2$ /vs/ $\bar{y}_{i,j}$ should be a straight line with slope $G$ ordinate at 0, $G^2 \sigma_{R}^2$.
+
+** CCD calibration (6) 						     :export:
+#+BEGIN_SRC R :session *R-ENP-2013* :exports none :eval no-export
+  toto <- "http://xtof.disque.math.cnrs.fr/data/"
+  la <- paste(toto,"Gain.2nd.RData",sep="")
+  download.file(la,
+                "Gain.2nd.RData",mode="wb")
+  load("Gain.2nd.RData")
+#+END_SRC
+
+#+RESULTS:
+: Gain.2nd
+
+#+header: :width 1600 :height 1600 :file exposition1.png
+#+BEGIN_SRC R :session *R-ENP-2013* :exports results :results output graphics :eval no-export
+  chipImage <- rbind(matrix(seq(300,450,len=80),nrow=2,ncol=80,byrow=TRUE),
+                     matrix(450,nrow=2,ncol=80),
+                     Gain.2nd[[1]][["image.data"]][,,1])
+  par(cex=3)
+  image(chipImage,
+        col=gray.colors(256),
+        axes=FALSE,
+        xlab="",
+        ylab="",
+        main="Exposure time : 10 ms")
+  axis(2,at=c(0,1),
+       labels=c("300","450"),
+       lty=0,las=1)
+  mtext("ADU      ",side=2,las=1,cex=3)
+#+END_SRC
+#+ATTR_LaTeX: :width 0.7\textwidth
+#+RESULTS:
+[[file:exposition1.png]]
+
+The first exposure of 10 ms (experiment performed by Andreas Pippow, Kloppenburg lag, Cologne University).
+
+** CCD calibration (7) 						     :export:
+#+header: :width 1600 :height 1200 :file evolution1.png
+#+BEGIN_SRC R :session *R-ENP-2013* :exports results :results output graphics :eval no-export
+aduTC <- cbind(Gain.2nd[[1]][["image.data"]][31,41,],
+               Gain.2nd[[1]][["image.data"]][31,40,],
+               Gain.2nd[[1]][["image.data"]][31,42,])
+layout(matrix(1:3,nrow=3))
+par(cex=2)
+plot(aduTC[,3],
+     type="l",
+     col=1,
+     xlab="Time (1 unit = 100 ms)",
+     ylab="ADU",
+     ylim=range(aduTC),
+     panel.first=grid(col="grey30"),
+     main="Top pixel",
+     lwd=2) 
+plot(aduTC[,1],
+     type="l",
+     col=1,
+     xlab="Time (1 unit = 100 ms)",
+     ylab="ADU",
+     ylim=range(aduTC),
+     panel.first=grid(col="grey30"),
+     main="Central pixel",
+     lwd=2)
+plot(aduTC[,2],
+     type="l",
+     col=1,
+     xlab="Time (1 unit = 100 ms)",
+     ylab="ADU",
+     ylim=range(aduTC),
+     panel.first=grid(col="grey30"),
+     main="Bottom pixel",
+     lwd=2)
+#+END_SRC
+#+ATTR_LaTeX: :width 0.8\textwidth
+#+RESULTS:
+[[file:evolution1.png]]
+
+Counts time evolution for three neighboring pixels (10 ms exposure time).
+
+** CCD calibration (8) 						     :export:
++ The data are going to be analyzed as if the $Y_{i,j,k}$ were IID, *but they were sequentially recorded*. It is therefore *strongly recommended* to check that the IID hypothesis is reasonable.
++ The small example of the previous figure shows that there are no (obvious) trends.
++ We must also check the correlation function. 
+
+** CCD calibration (9): absence of correlations 		     :export:
+
+#+header: :width 1600 :height 1600 :file acf1.png
+#+BEGIN_SRC R :session *R-ENP-2013* :exports results :results output graphics :eval no-export
+  par(cex=1.5)
+  acf(aduTC[,c(3,1,2)],cex.main=3,mar=c(5,4,3,2),lwd=2) 
+#+END_SRC
+#+ATTR_LaTeX: :width 0.7\textwidth
+#+RESULTS:
+[[file:acf1.png]]
+
+** CCD calibration (10): $S_{i,j}^2$ /vs/ $\bar{y}_{i,j}$					     :export:
+#+BEGIN_SRC R :session *R-ENP-2013* :exports none :results silent :eval no-export
+  ADU.m <- as.vector(
+    sapply(1:length(Gain.2nd), 
+           function(idx) 
+           apply(Gain.2nd[[idx]][["image.data"]],
+                 c(1,2),mean)))
+  ADU.v <- as.vector(
+    sapply(1:length(Gain.2nd), 
+           function(idx) 
+           apply(Gain.2nd[[idx]][["image.data"]],
+                 c(1,2),var)))
+#+END_SRC
+
+#+header: :width 1600 :height 1600 :file varVSmoyenne1.png
+#+BEGIN_SRC R :session *R-ENP-2013* :exports results :results output graphics :eval no-export
+  par(cex=3)
+  plot(ADU.m,
+       ADU.v,
+       pch=".",
+       xlab=expression(bar(ADU)),
+       ylab="var(ADU)"
+       )
+#+END_SRC
+#+ATTR_LaTeX: :width 0.7\textwidth
+#+RESULTS:
+[[file:varVSmoyenne1.png]]
+
+We do see the expected linear relation: $\mathrm{Var}[ADU] = G \mathrm{E}[ADU] + G^2 \sigma_{R}^2$. 
+
+** CCD calibration (11): Linear fit 				     :export:
+The [[http://en.wikipedia.org/wiki/Heteroscedasticity][heteroscedasticity]] (inhomogeneous variance) visible on the graph is also expected since the variance of a variance for an IID sample of size $n$ from a normal distribution with mean $\mu$ and variance $\sigma^2$ is:
+\[\mathrm{Var}[S^2] = \frac{2\sigma^4}{(n-1)} \; .\]
+
++ This means than when we do our linear fit we should use weights. 
++ A software package like [[http://www.r-project.org][R]] allows us to do that by giving a vector whose elements are proportional to inverse of the variance.
+
+** CCD calibration (12): Linear fit 				     :export:
++ If our mean values are in a variable called =ADU.m= and our variances in a variable called =ADU.V=, we would use the following call:
+#+BEGIN_SRC R :session *R-ENP-2013* :exports code :results silent :eval no-export
+  varVSmean <- lm(ADU.v ~ ADU.m, weights = 99/2/ADU.v^2) 
+#+END_SRC
++ And get:
+#+BEGIN_SRC R :session *R-ENP-2013* :exports results :results output :eval no-export
+  round(coefficients(varVSmean),digits=3)
+#+END_SRC
+
+#+RESULTS:
+: (Intercept)       ADU.m 
+:       5.611       0.140
+
+#+NAME: G-hat
+#+BEGIN_SRC R :session *R-ENP-2013* :exports none :results value :eval no-export :cache yes
+coefficients(varVSmean)[2]
+#+END_SRC
+
+#+RESULTS[d1b3c6eda031620228010d7d8b4e0b64c8b402c2]: G-hat
+: 0.139838301918234
+
+#+NAME: sigma2-hat
+#+BEGIN_SRC R :session *R-ENP-2013* :exports none :results value :eval no-export :cache yes
+coefficients(varVSmean)[1]/coefficients(varVSmean)[2]^2
+#+END_SRC
+
+#+RESULTS[9d95c77ebff8bc22909b6563c7a9d940f5e2c306]: sigma2-hat
+: 286.958979254978
+
+** CCD calibration (13): fit checking 				     :export:
+#+header: :width 1400 :height 1200 :file resVSfit1.png 
+#+BEGIN_SRC R :session *R-ENP-2013* :exports results :results output graphics
+  par(cex=3)
+  plot(varVSmean$fitted.values,varVSmean$residuals*sqrt(99/2)/ADU.v,pch=".",
+       xlab="Fitted values",ylab="Normalized residuals")  
+#+END_SRC
+#+ATTR_LaTeX: :width 0.8\textwidth
+#+RESULTS:
+[[file:resVSfit1.png]]
+
+** CCD calibration (14): some remarks 				     :export:
++ When we use a linear regression, we are (implicitly) assuming that the "independent" variable, here =ADU.m=, is /exactly/ known.
++ This was clearly not the case here since =ADU.m= was measured (with an error). 
++ We could therefore refine our fit.
+
+* Error propagation and variance stabilization :export:
+
+** Error propagation 						     :export:
++ Let us consider three random variables: $X$, $Y$ and $Z$ such that:
++ $X \approx \mathcal{N}(\mu_X,\sigma^2_X)$ or $X \approx \mu_X + \sigma_X \, \epsilon$ ($\epsilon \sim \mathcal{N}(0,1)$)
++ $Y \approx \mathcal{N}(\mu_Y,\sigma^2_Y)$ or $Y \approx \mu_Y + \sigma_Y \, \epsilon$
++ $X$ and $Y$ are independent 
++ $Z = f(X,Y)$, with $f$ continuous and differentiable.
++ Using a first order Taylor expansion we then have:\[ \begin{array}{lcl} Z & \approx & f(\mu_X + \sigma_X \, \epsilon_1,\mu_Y + \sigma_Y \, \epsilon_2) \\ & \approx & f(\mu_X,\mu_Y) + \sigma_X \, \epsilon_1 \, \frac{\partial f}{\partial X}(\mu_X,\mu_Y) + \sigma_Y \, \epsilon_2 \, \frac{\partial f}{\partial Y}(\mu_X,\mu_Y) \end{array}\]
++ $\mathrm{E}Z \approx f(\mu_X,\mu_Y) = f(\mathrm{E}X,\mathrm{E}Y)$
++ $\mathrm{Var}Z \equiv \mathrm{E}[(Z-\mathrm{E}Z)^2] \approx \sigma^2_X \, \frac{\partial f}{\partial X}^2(\mu_X,\mu_Y) + \sigma^2_Y \, \frac{\partial f}{\partial Y}^2(\mu_X,\mu_Y)$
++ $Z \approx f(\mu_X,\mu_Y) + \sqrt{\sigma^2_X \, \frac{\partial f}{\partial X}^2(\mu_X,\mu_Y) + \sigma^2_Y \, \frac{\partial f}{\partial Y}^2(\mu_X,\mu_Y)} \, \epsilon$
+
+** Variance stabilization (1): Theory 				     :export:
+
++ For our CCD model we have (for a given pixel): \[Y \sim G \, \lambda + \sqrt{G^2 \, (\lambda+\sigma_{R}^2)} \, \epsilon = \mu_Y + \sqrt{G \, \mu_Y + G^2 \, \sigma_{R}^2}\]
++ Then if $Z = f(Y)$ we get: \[Z \approx f(\mu_Y) + \mid f'(\mu_Y) \mid G \sqrt{\mu_Y / G+\sigma_{R}^2} \, \epsilon\]
++ What happens then if we take: $f(x) = 2 \, \sqrt{x/G + \sigma_{R}^2}$?
++ We have: \[f'(x) = \frac{1}{G \sqrt{ x / G + \sigma_{R}^2}}\]
++ Leading to: \[Z \approx 2 \, \sqrt{\mu_Y / G + \sigma_{R}^2} + \epsilon\]
+
+** Variance stabilization (2): Example 				     :export:
+#+header: :var G.hat=G-hat :var sigmaR2.hat=sigma2-hat
+#+BEGIN_SRC R :session *R-ENP-2013* :exports none :results silent :eval no-export
+  sADU.m <- as.vector(sapply(1:length(Gain.2nd), 
+                             function(idx) 
+                             apply(2*sqrt(Gain.2nd[[idx]][["image.data"]]/G.hat+sigmaR2.hat),
+                                   c(1,2),mean)))
+  sADU.v <- as.vector(sapply(1:length(Gain.2nd), 
+                             function(idx) 
+                             apply(2*sqrt(Gain.2nd[[idx]][["image.data"]]/G.hat+sigmaR2.hat),
+                                  c(1,2),var)))
+#+END_SRC
+
+#+header: :width 1500 :height 1200 :file varVSmeanStable1.png
+#+BEGIN_SRC R :session *R-ENP-2013* :exports results :results output graphics :eval no-export
+  par(cex=3,mar=c(5,5,2,2))
+  plot(sADU.m,sADU.v,pch=".",
+       xlab=expression(E(2*sqrt(ADU/G+sigma[R]^2))),
+       ylab=expression(Var(2*sqrt(ADU/G+sigma[R]^2))))
+  abline(a=1,0,col=2,lwd=3,lty=2)
+#+END_SRC 
+#+ATTR_LaTeX: :width 0.8\textwidth
+#+RESULTS:
+[[file:varVSmeanStable1.png]]
+
+* Application 							     :export:
+
+** Back to where we started :export:
+#+ATTR_LaTeX: :width 0.7\textwidth
+[[file:POMC-raw-data.png]]
+
+ADU counts (raw data) from Fura-2 excited at 340 nm. Each square corresponds to a pixel. 25.05 s of data are shown. Same scale on each sub-plot. 12 x 10 among 60 x 80 pixels are shown. Data recorded by Andreas Pippow (Kloppenburg Lab. Cologne University).
+
+** Quick ROI detection (1): Motivation 				     :export:
++ After variance stabilization: $Z_{i,j,k} = 2 \, \sqrt{ADU_{i,j} / G + \sigma_{R}^2}$, the variance at each pixel $(i,j)$ at each time, $k$, should be 1.
++ If a pixel contains no dynamical signal---that is nothing more than a constant background signal---the following statistics: \[RSS_{i,j} \equiv \sum_{k=1}^{K} (Z_{i,j,k} - \overline{Z}_{i,j})^2 \quad \mathrm{with} \quad \overline{Z}_{i,j} \equiv \frac{1}{K} \sum_{k=1}^{K} Z_{i,j,k}\] should follow a $\chi^2$ distribution with $K-1$ degrees of freedom.
++ We could therefore compute the values of the complementary cumulative distribution function of the theoretical $\chi_{K-1}^2$ distribution:\[1 - F_{\chi_{K-1}^2}(RSS_{i,j})\] and look for very small values---that is very small probabilities---(using a log scale helps here). 
+
+**  Quick ROI detection (2) 					     :export:
+#+header: :var G.hat=G-hat :var sigmaR2.hat=sigma2-hat
+#+BEGIN_SRC R :session *R-ENP-2013* :exports none :results silent :eval no-export
+  varStab <- function(x) 2*sqrt(x/G.hat+sigmaR2.hat)
+  stack.stab <- varStab(stack)
+  stack.stab.sumsq <- apply(stack.stab,c(1,2),function(x) sum((x-mean(x))^2))
+#+END_SRC
+
+#+headers: :width 1800 :height 1000 :file stack-contour.png 
+#+BEGIN_SRC R :session *R-ENP-2013* :exports results :results output graphics :eval no-export
+  layout(matrix(1:2,nc=2))
+  par(cex=3)
+  contour(1:80,1:60,t(pchisq(stack.stab.sumsq,167,lower.tail=FALSE,log.p=TRUE)),lwd=3,labcex=1,main="Full field")
+  contour(1:80,1:60,t(pchisq(stack.stab.sumsq,167,lower.tail=FALSE,log.p=TRUE)),lwd=3,labcex=2,xlim=c(30,50),ylim=c(25,45),main="Zoom")
+#+END_SRC
+#+ATTR_LaTeX: :width 1.0\textwidth
+#+RESULTS:
+[[file:stack-contour.png]]
+
+Contour plots of $\log\left(1 - F_{\chi_{K-1}^2}(RSS_{i,j})\right)$
+
+** Quick ROI detection (3): Contour plot of $RSS_{i,j}$  :noexport:
+#+BEGIN_SRC R :session *R-ENP-2013* :exports none :results silent :eval no-export
+  stack.stab.sumsq.rec <- ifelse(stack.stab.sumsq > qchisq(1-1/60/80,df=167),stack.stab.sumsq,0) 
+#+END_SRC
+
+#+headers: :width 1800 :height 1200 :file stack-rec-contour.png 
+#+BEGIN_SRC R :session *R-ENP-2013* :exports results :results output graphics :eval no-export
+  par(cex=3)
+  contour(1:80,1:60,t(stack.stab.sumsq.rec),
+          lwd=3,labcex=2,
+          levels=c(250,500,750))
+#+END_SRC
+#+ATTR_LaTeX: :width 1.0\textwidth
+#+RESULTS:
+[[file:stack-rec-contour.png]]
+
+The quantile at 1-1/60/80 is 239.
+
+** Pointwise time course estimation (1) 			     :export:
++ We are going to be (very) conservative and keep as our ROI the pixels having an $\log\left(1 - F_{\chi_{K-1}^2}(RSS)\right) \le -300$.
++ We are then left with 12 pixels.
++ We are going to model the fluorescence intensity of each of these pixels by: \[S_{i,j}(t) = \phi_{i,j} \, f(t) + b \; ,\] where $f(t)$ is a signal time course to all pixels of the ROI, $\phi_{i,j}$ is a pixel specific parameter and $b$ is a background fluorescence assumed identical for each pixel.
++ The time $t$ is in fact a discrete variable, $t = \delta \, k$ ($\delta$ = 150 ms) and we are seeking a pointwise estimation: $\{f_1,f_2,\ldots,f_K\}$ ($K$ = 168) where $f_k = f(\delta \, k)$.
++ We end up with 12 ($\phi_{i,j}$) + 168 ($f_k$) + 1 ($b$) = 181 parameters for 12 x 168 = 2016 measurements.
+
+** Pointwise time course estimation (2) 			     :export:
++ We need to add a constraint since with our model specification: \[S_{i,j,k} = \phi_{i,j} \, f_k + b \; ,\] we can multiply all the $\phi_{i,j}$ by 2 and divide all the $f_k$ by 2 and get the same prediction.
++ We are going to set $f_1=1$ and our pointwise estimation relates to what is usually done with this type of data, $\Delta S(t) / S(1)$ through: \[\Delta S(t) / S(1) = \frac{S(t) - S(1)}{S(1)} = f(t) - 1 + \mathrm{noise}\].
++ *Notice that no independent background measurement is used*.
+
+** Pointwise time course estimation (3) 			     :export:
+#+BEGIN_SRC R :session *R-ENP-2013* :exports none :results output :eval no-export
+  threshold <- -300
+  npix <- sum(pchisq(c(stack.stab.sumsq),167,lower.tail=FALSE,log.p=TRUE) <= threshold)
+  roi.pos <- matrix(0,nr=2,nc=npix)
+  idx <- 1
+  for (i in 1:60)
+      for (j in 1:80)
+          if (pchisq(stack.stab.sumsq[i,j],167,lower.tail=FALSE,log.p=TRUE) <= threshold) {
+              roi.pos[,idx] <- c(i,j)
+              idx <- idx+1}
+  data4fit <- sapply(1:npix, function(idx) stack.stab[roi.pos[1,idx],roi.pos[2,idx],-1])
+  rssFct <- function(par) {
+      par <- exp(par)
+      b <- par[1]
+      phi <- par[2:(npix+1)]
+      f <- c(1,par[-(1:(npix+1))])
+      pred <- varStab(f %o% phi + b)
+      sum((data4fit-pred)^2)}
+  
+  data4fit0 <- sapply(1:npix, function(idx) stack[roi.pos[1,idx],roi.pos[2,idx],-1])
+  f0 <- apply(apply(data4fit0,2,function(x) x/x[1]),1,mean)
+  b0 <- 100
+  phi0 <- apply(data4fit0,2,function(x) mean((x-b0)/f0))
+  par0 <- log(c(b0,phi0,f0[-1]))
+  fit0 <- optim(par0,rssFct,method="BFGS",hessian=TRUE,control=list(maxit=1000))
+  (b <- exp(fit0$par[1]))
+  (phi <- exp(fit0$par[2:(npix+1)]))
+  f <- c(1,exp(fit0$par[-(1:(npix+1))]))
+  se <- sqrt(diag(solve(fit0$hessian/2)))
+  upr <- exp(fit0$par+1.96*se)
+  lwr <- exp(fit0$par-1.96*se)
+  f.upr <- c(1,upr[-(1:(npix+1))])
+  f.lwr <- c(1,lwr[-(1:(npix+1))])
+  str(fit0)
+#+END_SRC
+
+#+RESULTS:
+#+begin_example
+[1] 100.4236
+ 
+[1] 703.0555 793.8919 728.9027 544.9361 753.1688 844.6343 856.6247 701.4253
+ [9] 672.7260 782.2524 774.4505 661.0391
+List of 6
+ $ par        : num [1:179] 4.61 6.56 6.68 6.59 6.3 ...
+ $ value      : num 1939
+ $ counts     : Named int [1:2] 436 46
+  ..- attr(*, "names")= chr [1:2] "function" "gradient"
+ $ convergence: int 0
+ $ message    : NULL
+ $ hessian    : num [1:179, 1:179] 325601 200838 204637 201999 191779 ...
+#+end_example
+
+#+headers: :width 1200 :height 1000 :file time-course.png 
+#+BEGIN_SRC R :session *R-ENP-2013* :exports results :results output graphics :eval no-export
+par(cex=3)
+tt <- (2:168)*0.15
+envel <- c(f.upr,rev(f.lwr))
+plot(tt,f,type="n",xlab="Time (s)",ylim=range(envel))
+polygon(c(tt,rev(tt)),envel,border=NA,col="grey70")
+lines(tt,f,lwd=3)
+#+END_SRC
+#+ATTR_LaTeX: :width 0.8\textwidth
+#+RESULTS:
+[[file:time-course.png]]
+
+Notice the confidence intervals
+
+** Pointwise time course estimation (4) 			     :export:
++ In addition to confidence intervals on model parameters, this approach gives classical $\chi^2$ based goodness-of-fit tests.
++ Here we get a slightly too large p value: 0.968
++ This is likely due to some background inhomogeneity.
++ To learn how to deal with that, check: Joucla et al (2013) Estimating background-subtracted fluorescence transients in calcium imaging experiments: A quantitative approach. /Cell Calcium/ in press.
+
+** Warning 							     :export:
++ I haven't considered diffusion effects here, but this is more a model issue than a noise issue.
++ I assumed that talking about concentration was meaningful. This is fine when we look at large neurites. Since 1 $\mu{}M$ gives roughly 600 ions per cubic $\mu{}m$, a baseline concentration of 50 nM gives 30000 ions is a small soma (10 $\mu{}m$ in radius) but gives only 30 ions in a spine.
++ In such small volumes, the discrete nature of the ions cannot be ignored anymore, but that's another story...
+
+** Thanks :export:
+This work was done in collaboration with:
++ Sebastien Joucla
++ Romain Franconville
++ Andeas Pippow
++ Peter Kloppenburg
+
+Thank you for your attention!
